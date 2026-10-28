@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ecgc"
+version = "0.1.0"
+description = "Projet d'apprentissage, classifieur ECG avec prédiction conforme (PTB-XL)"
+authors = [{ name = "Tamer Benturquia" }]
+requires-python = ">=3.10"
+dependencies = ["numpy", "pandas", "wfdb"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
