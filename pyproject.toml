@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Projet d'apprentissage, classifieur ECG avec prédiction conforme (PTB-XL)"
 authors = [{ name = "Tamer Benturquia" }]
 requires-python = ">=3.10"
-dependencies = ["numpy", "pandas", "wfdb", "torch>=2.2"]
+dependencies = ["numpy", "pandas", "wfdb", "torch>=2.2", "scikit-learn"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
