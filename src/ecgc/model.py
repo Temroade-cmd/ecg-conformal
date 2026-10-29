@@ -21,3 +21,19 @@ class ResBlock1d(nn.Module):
     def forward(self, x):
         # sortie = transformation + entrée d'origine
         return self.act(self.body(x) + x)
+
+
+class ECGResNet(nn.Module):
+    def __init__(self, n_leads=12, n_classes=5, widths=(64, 128, 128), dropout=0.3):
+        super().__init__()
+        blocks, c = [], n_leads
+        for w in widths:
+            blocks.append(ResBlock1d(c, w))
+            c = w
+        self.features = nn.Sequential(*blocks)
+        self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(2 * c, n_classes))
+
+    def forward(self, x):  # x de taille (batch, 12, temps), déjà normalisé
+        h = self.features(x)
+        h = torch.cat([h.mean(-1), h.amax(-1)], dim=1)  # pooling moyen + max collés ensemble
+        return self.head(h)  # logits, pas encore de sigmoïde
