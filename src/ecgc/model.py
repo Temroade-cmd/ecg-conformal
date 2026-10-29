@@ -16,11 +16,18 @@ class ResBlock1d(nn.Module):
                 layers.append(nn.ReLU(inplace=True))
             c = c_out
         self.body = nn.Sequential(*layers)
+        # si le nombre de canaux change (12 -> 64 par exemple), on ne peut pas additionner directement
+        # le raccourci passe alors par une conv 1x1 qui remet l'entrée au bon nombre de canaux
+        self.skip = (
+            nn.Identity()
+            if c_in == c_out
+            else nn.Sequential(nn.Conv1d(c_in, c_out, 1, bias=False), nn.BatchNorm1d(c_out))
+        )
         self.act = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        # sortie = transformation + entrée d'origine
-        return self.act(self.body(x) + x)
+        # sortie = transformation + entrée d'origine (adaptée si besoin)
+        return self.act(self.body(x) + self.skip(x))
 
 
 class ECGResNet(nn.Module):
