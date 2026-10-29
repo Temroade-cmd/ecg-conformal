@@ -44,3 +44,18 @@ class ECGResNet(nn.Module):
         h = self.features(x)
         h = torch.cat([h.mean(-1), h.amax(-1)], dim=1)  # pooling moyen + max collés ensemble
         return self.head(h)  # logits, pas encore de sigmoïde
+
+
+class Deployable(nn.Module):
+    # version pour l'export, on met la normalisation et la sigmoïde dedans
+    # comme ça l'app donne directement des millivolts et reçoit des probas entre 0 et 1
+
+    def __init__(self, net, mean, std):
+        super().__init__()
+        self.net = net
+        # register_buffer, ces valeurs sont sauvegardées avec le modèle mais ne sont pas entraînées
+        self.register_buffer("mean", torch.as_tensor(mean, dtype=torch.float32).view(1, -1, 1))
+        self.register_buffer("std", torch.as_tensor(std, dtype=torch.float32).view(1, -1, 1))
+
+    def forward(self, ecg):
+        return torch.sigmoid(self.net((ecg - self.mean) / self.std))
