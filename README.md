@@ -9,7 +9,7 @@ Chaque étape est expliquée dans [JOURNAL.md](JOURNAL.md), avec le pourquoi de 
 ## Avancement
 
 - [x] 1. Squelette du projet et chargement de PTB-XL
-- [ ] 2. Le modèle
+- [x] 2. Le modèle
 - [ ] 3. L'entraînement
 - [ ] 4. Le vrai entraînement sur GitHub Actions
 - [ ] 5. La prédiction conforme
