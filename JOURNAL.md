@@ -73,3 +73,68 @@ Pour tester sans télécharger 1,7 Go, `make_fixture.py` crée quelques centaine
 ### GitHub Actions
 
 `ci.yml` dit à GitHub de lancer les tests sur une machine propre à chaque push. Si je casse quelque chose, je le vois tout de suite, et le badge vert prouve que le projet s'installe et marche ailleurs que sur mon ordinateur.
+
+---
+
+## Étape 2. Le modèle
+
+### Ce que j'ai ajouté, dans l'ordre des commits
+
+1. PyTorch dans les dépendances
+2. Le bloc résiduel
+3. Le modèle complet
+4. Les tests du modèle, qui ont échoué
+5. La correction du raccourci, les tests repassent au vert
+6. La version déployable du modèle et son test
+
+### Pourquoi PyTorch
+
+C'est la librairie de deep learning la plus utilisée en recherche, et celle de la plupart des papiers sur PTB-XL. Dans la CI j'installe la version CPU (`--index-url .../whl/cpu`). La version normale embarque CUDA pour les cartes graphiques, plusieurs Go inutiles sur une machine GitHub qui n'a pas de GPU.
+
+### Pourquoi un réseau convolutif 1D
+
+Un ECG n'est pas une image, c'est 12 courbes dans le temps. Une convolution 1D fait glisser un petit filtre le long du temps, sur les 12 dérivations à la fois. Un filtre peut apprendre à reconnaître une forme locale, un QRS large, une onde T inversée, un sus-décalage du segment ST. Le même filtre sert à tous les endroits du signal, donc le modèle reconnaît un battement anormal qu'il soit au début ou à la fin des 10 secondes.
+
+### Le bloc résiduel
+
+Chaque bloc enchaîne 3 convolutions, de noyaux 7, 5 puis 3. À 100 Hz, un noyau de 7 couvre 70 ms, à peu près la durée d'un QRS. Après chaque convolution il y a une BatchNorm, qui remet les valeurs à une échelle stable et rend l'entraînement plus facile, et une ReLU, qui garde ce qui est positif et met le reste à zéro.
+
+Quelques détails.
+- `padding=k // 2` ajoute des zéros aux bords pour que le signal garde sa longueur de 1000 points.
+- `bias=False` dans les convolutions, parce que la BatchNorm qui suit a déjà son propre décalage. Un biais avant serait annulé.
+- Pas de ReLU après la 3e convolution. Elle vient après l'addition avec le raccourci.
+
+Le **raccourci** (skip connection) est l'idée des ResNet (He et al., 2016). La sortie du bloc est `transformation(x) + x`. Le bloc n'apprend que ce qu'il faut ajouter à l'entrée, et pendant l'entraînement le gradient peut remonter directement par le raccourci. Sans ça, les réseaux profonds apprennent mal.
+
+### L'erreur que j'ai faite
+
+J'ai d'abord écrit le raccourci comme une simple addition, `body(x) + x`. Le test `test_block_keeps_length` passait, parce qu'il utilise un bloc de 64 vers 64 canaux. Mais les deux autres tests ont échoué dans la CI (le commit "Tests du modèle" est rouge sur GitHub).
+
+La raison, le premier bloc reçoit les 12 dérivations et sort 64 canaux. On essaie donc d'additionner un tenseur de 64 canaux avec un tenseur de 12 canaux, et PyTorch refuse.
+
+La correction, quand le nombre de canaux change, le raccourci passe par une convolution 1x1 (plus une BatchNorm). Une conv 1x1 ne regarde aucun voisin dans le temps, elle fait juste une combinaison des 12 canaux pour en fabriquer 64. Quand le nombre de canaux ne change pas, le raccourci reste l'identité. C'est exactement ce que fait le ResNet d'origine.
+
+Ce que j'en retiens, un test qui passe sur un cas facile (64 vers 64) ne prouve pas que le cas réel (12 vers 64) marche. Il faut tester avec les vraies dimensions.
+
+### Le modèle complet
+
+Trois blocs, 12 → 64 → 128 → 128 canaux. Ensuite il faut passer d'un signal de 1000 points à un seul vecteur par ECG. Je fais deux résumés et je les colle.
+- la **moyenne** sur le temps, ce qui est présent en général dans le tracé
+- le **maximum** sur le temps, ce qui apparaît fortement au moins une fois, même sur un seul battement
+
+Ça donne 256 valeurs, puis un dropout de 30% (pendant l'entraînement on éteint au hasard 30% des valeurs, pour éviter que le modèle compte trop sur quelques-unes), puis une couche linéaire vers 5 scores, un par diagnostic.
+
+Au total environ 485 000 paramètres. C'est petit, ça s'entraîne sur CPU, et c'est proche du resnet1d_wang du benchmark PTB-XL.
+
+Le modèle renvoie des **logits** (des scores entre moins l'infini et plus l'infini), pas encore des probabilités. La sigmoïde viendra dans la fonction de perte à l'étape 3, c'est plus stable numériquement.
+
+### La version déployable
+
+Pour l'app, je veux pouvoir donner un ECG brut en millivolts et recevoir 5 probabilités. `Deployable` enveloppe le modèle et fait les deux étapes autour, la normalisation avant et la sigmoïde après. La moyenne et l'écart-type sont enregistrés avec `register_buffer`, ils sont sauvegardés avec le modèle mais ne sont jamais modifiés par l'entraînement.
+
+### Les tests
+
+- La longueur du signal est conservée dans un bloc.
+- Le modèle sort bien 4 × 5 scores pour 4 ECG.
+- Le gradient arrive jusqu'à la toute première convolution, donc tout le réseau peut apprendre.
+- `Deployable` donne exactement le même résultat que les étapes faites à la main, et des valeurs entre 0 et 1.
