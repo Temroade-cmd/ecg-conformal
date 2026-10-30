@@ -138,3 +138,79 @@ Pour l'app, je veux pouvoir donner un ECG brut en millivolts et recevoir 5 proba
 - Le modèle sort bien 4 × 5 scores pour 4 ECG.
 - Le gradient arrive jusqu'à la toute première convolution, donc tout le réseau peut apprendre.
 - `Deployable` donne exactement le même résultat que les étapes faites à la main, et des valeurs entre 0 et 1.
+
+---
+
+## Étape 3. L'entraînement
+
+### Ce que j'ai ajouté, dans l'ordre des commits
+
+1. La métrique macro AUROC
+2. L'augmentation des données
+3. La fonction `predict`
+4. La boucle d'entraînement `fit`
+5. Les tests de l'entraînement, qui ont échoué
+6. La correction multi-label, les tests repassent au vert
+7. Le script `run.py`
+8. Le test de la commande complète
+9. La correction d'une fuite de données
+10. La correction du choix de la meilleure époque
+
+### Pourquoi l'AUROC
+
+Pour chaque diagnostic, l'AUROC répond à une question simple. Si je prends au hasard un ECG qui a le diagnostic et un ECG qui ne l'a pas, quelle est la probabilité que le modèle donne un score plus haut au premier ? 0,5 c'est le hasard, 1 c'est parfait. L'avantage, ça ne dépend d'aucun seuil, et ça reste lisible même quand une classe est rare (l'hypertrophie l'est). La **macro** AUROC est la moyenne sur les 5 diagnostics, chacun compte autant. C'est aussi la métrique du benchmark PTB-XL, donc je peux comparer. J'utilise `roc_auc_score` de scikit-learn plutôt que de la recoder.
+
+### L'augmentation des données
+
+Pendant l'entraînement, chaque ECG est légèrement modifié à chaque passage, pour que le modèle ne retienne pas les exemples par cœur.
+- **Amplitude** multipliée par un facteur entre 0,9 et 1,1, comme des électrodes plus ou moins bien posées.
+- **Dérive de la ligne de base**, une lente ondulation ajoutée, comme quand le patient respire.
+- **Bruit** léger, comme le bruit des muscles ou du secteur.
+- **Décalage** jusqu'à 0,5 s, l'enregistrement ne commence jamais au même moment du battement.
+
+Toutes ces modifications ne changent pas le diagnostic. Je n'ai pas mis de retournement du signal ou d'inversion des dérivations, ça changerait le sens médical du tracé.
+
+Le générateur `g` avec une graine fixe rend l'entraînement reproductible, le même code donne le même modèle.
+
+### La boucle d'entraînement
+
+- **AdamW**, l'optimiseur standard, avec un `weight_decay` qui pousse les poids à rester petits (moins de surapprentissage).
+- **OneCycleLR**, le taux d'apprentissage monte pendant les premiers 20% de l'entraînement puis redescend doucement. Ça converge plus vite et plus proprement qu'un taux fixe.
+- Après chaque époque, je calcule la macro AUROC sur la validation et je **garde une copie des poids de la meilleure époque**. À la fin je recharge ces poids-là, pas ceux de la dernière époque.
+- `predict` travaille par paquets de 256 ECG pour ne pas saturer la mémoire, et `torch.no_grad()` évite de calculer des gradients inutiles.
+
+### Erreur 1, j'ai traité le problème comme s'il n'y avait qu'un seul diagnostic par ECG
+
+Dans ma première version, `predict` utilisait un **softmax** et l'entraînement une **CrossEntropyLoss**. Le softmax force les 5 probabilités à faire 1 au total, comme si chaque ECG ne pouvait avoir qu'un seul diagnostic. Or un ECG peut très bien avoir un infarctus **et** une anomalie ST/T.
+
+Le test `test_predict_gives_independent_probabilities` l'a montré (commit "Tests de l'entraînement", rouge sur GitHub). Avec un faux modèle sûr des 5 diagnostics, le softmax donnait 0,2 à chacun au lieu de probabilités proches de 1.
+
+La correction, une **sigmoïde par diagnostic**, chacun est une question oui ou non indépendante, et la perte **BCEWithLogitsLoss** qui va avec. Elle prend directement les logits et applique la sigmoïde à l'intérieur, de façon plus stable numériquement que si je le faisais avant. C'est pour ça que le modèle de l'étape 2 renvoie des logits.
+
+Le test sur les vraies données passait aussi avec l'erreur. Le code tournait, il donnait juste des probabilités fausses. C'est un piège important, un code qui ne plante pas n'est pas forcément un code juste.
+
+### Erreur 2, une fuite de données dans la normalisation
+
+Dans `run.py`, j'ai d'abord calculé la moyenne et l'écart-type de chaque dérivation sur **tout** le dataset (`ds.X`), donc aussi sur la validation et le test. Les tests passaient, aucun ne pouvait le voir. Je l'ai repéré en relisant le code.
+
+Le problème, c'est une fuite d'information. Des statistiques calculées en partie sur les patients de test entrent dans le modèle. Ici l'effet serait petit, mais par principe tout ce que le modèle utilise doit venir du train seulement. Sinon les résultats du test ne mesurent plus vraiment ce qui se passerait sur de nouveaux patients.
+
+### Erreur 3, j'ai choisi la meilleure époque sur le test
+
+J'avais aussi passé le fold 10 (le test) à `fit` pour suivre l'AUROC pendant l'entraînement. Mais `fit` s'en sert pour **choisir** la meilleure époque. Dès qu'on fait un choix avec le test, le test n'est plus indépendant, et le score final serait trop optimiste.
+
+La correction, c'est le fold 8 (la validation) qui sert à choisir. Le fold 10 n'est plus touché jusqu'à l'évaluation finale de l'étape 6.
+
+### Ce que sauve run.py
+
+`model.pt` contient les poids **et** la moyenne et l'écart-type du train. Les deux vont ensemble, un modèle sans sa normalisation donnerait n'importe quoi. `history.json` garde la perte et l'AUROC de validation à chaque époque, pour tracer la courbe d'entraînement plus tard.
+
+### Les tests
+
+- La macro AUROC vaut 1 pour un classement parfait.
+- L'augmentation garde la forme du signal.
+- Les probabilités sont indépendantes d'un diagnostic à l'autre.
+- `fit` tourne sur le faux PTB-XL et donne une perte finie.
+- La commande `python -m ecgc.run train` complète produit bien `model.pt` et `history.json`.
+
+Le faux PTB-XL est maintenant créé une seule fois pour tous les tests, grâce à une fixture pytest dans `conftest.py`.
