@@ -39,7 +39,8 @@ jobs:
           command -v aws >/dev/null || pip install -q awscli
           mkdir -p data/raw/ptbxl
           # copie officielle de PhysioNet sur AWS, beaucoup plus rapide que le site
-          aws s3 sync s3://physionet-open/ptb-xl/1.0.3/ data/raw/ptbxl --only-show-errors \
+          # le bucket est public, --no-sign-request dit à aws de ne pas chercher de compte AWS
+          aws s3 sync s3://physionet-open/ptb-xl/1.0.3/ data/raw/ptbxl --no-sign-request --only-show-errors \
             --exclude "*" --include "ptbxl_database.csv" --include "scp_statements.csv" --include "records100/*"
           python -m ecgc.run prepare --ptbxl data/raw/ptbxl --cache data/ptbxl100.npz
           rm -rf data/raw
