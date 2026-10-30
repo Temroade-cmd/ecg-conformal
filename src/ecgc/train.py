@@ -40,7 +40,7 @@ def predict(model, X, mean, std, batch=256):
     out = []
     for i in range(0, len(X), batch):
         xb = (torch.as_tensor(X[i : i + batch]) - m) / s
-        out.append(torch.softmax(model(xb), dim=1).numpy())
+        out.append(torch.sigmoid(model(xb)).numpy())  # une proba indépendante par diagnostic
     return np.concatenate(out)
 
 
@@ -51,7 +51,7 @@ def fit(train, val, mean, std, epochs=30, batch=128, lr=3e-3, seed=0, log=print)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-2)
     steps = epochs * math.ceil(len(train) / batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=lr, total_steps=steps, pct_start=0.2)
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn = nn.BCEWithLogitsLoss()  # multi-label, une sigmoïde et une perte binaire par diagnostic
 
     m = torch.as_tensor(mean).view(1, -1, 1)
     s = torch.as_tensor(std).view(1, -1, 1)
