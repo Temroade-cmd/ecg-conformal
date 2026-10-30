@@ -1,0 +1,56 @@
+name: train on PTB-XL
+
+# entraînement complet sur le vrai PTB-XL
+# lancé à la main depuis l'onglet Actions (bouton "Run workflow"), jamais à chaque push
+
+on:
+  workflow_dispatch:
+    inputs:
+      epochs:
+        description: "Nombre d'époques"
+        default: "20"
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e .
+
+      # le cache .npz est gardé par GitHub entre deux runs, pas besoin de retélécharger
+      - name: Cache PTB-XL
+        id: data
+        uses: actions/cache@v4
+        with:
+          path: data/ptbxl100.npz
+          key: ptbxl-1.0.3-100hz-v1
+
+      - name: Download PTB-XL and build the cache
+        if: steps.data.outputs.cache-hit != 'true'
+        run: |
+          command -v aws >/dev/null || pip install -q awscli
+          mkdir -p data/raw/ptbxl
+          # copie officielle de PhysioNet sur AWS, beaucoup plus rapide que le site
+          aws s3 sync s3://physionet-open/ptb-xl/1.0.3/ data/raw/ptbxl --only-show-errors \
+            --exclude "*" --include "ptbxl_database.csv" --include "scp_statements.csv" --include "records100/*"
+          python -m ecgc.run prepare --ptbxl data/raw/ptbxl --cache data/ptbxl100.npz
+          rm -rf data/raw
+
+      - name: Train
+        run: |
+          python -m ecgc.run train --cache data/ptbxl100.npz --out runs/main \
+            --epochs ${{ github.event.inputs.epochs }} --threads $(nproc)
+
+      # le modèle et l'historique sont gardés 90 jours, téléchargeables depuis la page du run
+      - uses: actions/upload-artifact@v4
+        with:
+          name: run-${{ github.run_number }}
+          path: runs/main
