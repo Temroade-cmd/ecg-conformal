@@ -50,6 +50,14 @@ jobs:
           python -m ecgc.run train --cache data/ptbxl100.npz --out runs/main \
             --epochs ${{ github.event.inputs.epochs }} --threads $(nproc)
 
+      # tableau des époques affiché directement sur la page du run
+      - name: Summary
+        run: |
+          python scripts/summary.py runs/main/history.json > summary.md
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+          # la ligne du meilleur score aussi en annotation, visible en haut de la page du run
+          echo "::notice title=Entraînement::$(grep Meilleure summary.md)"
+
       # le modèle et l'historique sont gardés 90 jours, téléchargeables depuis la page du run
       - uses: actions/upload-artifact@v4
         with:
