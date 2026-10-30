@@ -25,12 +25,13 @@ def cmd_train(a):
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     ds = D.load_cache(Path(a.cache))
-    train, test = ds.split(D.TRAIN_FOLDS), ds.split(D.TEST_FOLD)
-    print(f"train {len(train)}  test {len(test)}")
+    # le test (fold 10) n'est pas touché ici, il sert une seule fois à la toute fin
+    train, val = ds.split(D.TRAIN_FOLDS), ds.split(D.VAL_FOLD)
+    print(f"train {len(train)}  val {len(val)}")
 
     # normalisation calculée sur le train uniquement, pour ne rien apprendre du test
     mean, std = D.lead_stats(train.X)
-    net, history = fit(train, test, mean, std, epochs=a.epochs, batch=a.batch, lr=a.lr, seed=a.seed)
+    net, history = fit(train, val, mean, std, epochs=a.epochs, batch=a.batch, lr=a.lr, seed=a.seed)
 
     # on sauve les poids et la normalisation ensemble, l'un ne sert à rien sans l'autre
     torch.save({"state_dict": net.state_dict(), "mean": mean, "std": std}, out / "model.pt")
