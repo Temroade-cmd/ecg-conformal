@@ -25,3 +25,16 @@ def augment(x, g):
     x = x * scale + wander + noise
     shift = int(torch.randint(-50, 51, (1,), generator=g))  # jusqu'à 0.5 s
     return torch.roll(x, shifts=shift, dims=-1)
+
+
+@torch.no_grad()
+def predict(model, X, mean, std, batch=256):
+    # probas du modèle sur un tableau d'ECG, par paquets pour ne pas saturer la mémoire
+    model.eval()
+    m = torch.as_tensor(mean).view(1, -1, 1)
+    s = torch.as_tensor(std).view(1, -1, 1)
+    out = []
+    for i in range(0, len(X), batch):
+        xb = (torch.as_tensor(X[i : i + batch]) - m) / s
+        out.append(torch.softmax(model(xb), dim=1).numpy())
+    return np.concatenate(out)
