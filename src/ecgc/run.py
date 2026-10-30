@@ -28,7 +28,8 @@ def cmd_train(a):
     train, test = ds.split(D.TRAIN_FOLDS), ds.split(D.TEST_FOLD)
     print(f"train {len(train)}  test {len(test)}")
 
-    mean, std = D.lead_stats(ds.X)
+    # normalisation calculée sur le train uniquement, pour ne rien apprendre du test
+    mean, std = D.lead_stats(train.X)
     net, history = fit(train, test, mean, std, epochs=a.epochs, batch=a.batch, lr=a.lr, seed=a.seed)
 
     # on sauve les poids et la normalisation ensemble, l'un ne sert à rien sans l'autre
