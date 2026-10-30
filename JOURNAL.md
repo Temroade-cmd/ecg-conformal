@@ -214,3 +214,72 @@ La correction, c'est le fold 8 (la validation) qui sert à choisir. Le fold 10 n
 - La commande `python -m ecgc.run train` complète produit bien `model.pt` et `history.json`.
 
 Le faux PTB-XL est maintenant créé une seule fois pour tous les tests, grâce à une fixture pytest dans `conftest.py`.
+
+---
+
+## Étape 4. Le vrai entraînement sur GitHub Actions
+
+### Ce que j'ai ajouté, dans l'ordre des commits
+
+1. Le workflow d'entraînement `train.yml`, qui a échoué au premier lancement
+2. La correction, l'accès anonyme aux données
+3. Le résumé de l'entraînement sur la page du run
+
+### Pourquoi GitHub Actions pour entraîner
+
+Je n'ai pas de carte graphique, et je ne voulais pas bloquer mon ordinateur pendant des heures. GitHub prête gratuitement des machines aux repos publics (4 processeurs, 16 Go de mémoire), les mêmes qui lancent déjà mes tests. Un job peut durer au maximum 6 heures, j'ai mis `timeout-minutes: 340` pour garder une marge.
+
+`--threads $(nproc)` dit à PyTorch d'utiliser tous les processeurs de la machine. `nproc` est une commande Linux qui donne leur nombre.
+
+### Lancé à la main, pas à chaque push
+
+Le workflow démarre avec `workflow_dispatch`, c'est-à-dire avec le bouton "Run workflow" dans l'onglet Actions. Si je l'avais mis sur `push` comme les tests, chaque petit commit aurait relancé 2 h 30 d'entraînement. Le champ `epochs` permet de choisir le nombre d'époques au moment du lancement, sans toucher au code.
+
+### Télécharger PTB-XL sur la machine
+
+PhysioNet a une copie officielle de ses données sur Amazon S3 (le stockage d'AWS), dans un bucket public. C'est beaucoup plus rapide que le site. `aws s3 sync` ne copie que ce que je lui demande avec `--include`, ici les deux fichiers CSV et le dossier `records100` (les ECG à 100 Hz). Les ECG à 500 Hz ne servent à rien pour moi et pèsent bien plus lourd.
+
+Ensuite `python -m ecgc.run prepare` fabrique le cache `.npz` de l'étape 1, et `rm -rf data/raw` supprime les fichiers bruts pour libérer de la place.
+
+### Erreur 1, aws cherchait un compte AWS
+
+Le premier lancement a échoué au bout de 42 secondes, avec ce message.
+
+```
+Unable to locate credentials. You can configure credentials by running "aws configure".
+```
+
+Par défaut, `aws` signe chaque demande avec un compte AWS. Sur la machine de GitHub il n'y en a pas, donc il refuse avant même d'essayer. Le bucket de PhysioNet est public, il n'y a pas besoin de compte. L'option `--no-sign-request` dit justement à `aws` de faire une demande anonyme. J'ai pu reproduire l'erreur sur mon ordinateur avant de corriger, pour être sûr que c'était bien ça.
+
+### D'abord un test rapide avec 1 époque
+
+Avant de lancer 20 époques, j'ai lancé le workflow avec `epochs=1`. Il a pris 15 minutes et il a vérifié toute la chaîne d'un coup, le téléchargement, la préparation du cache, l'entraînement, l'enregistrement du résultat. Si une étape avait cassé à la fin, je l'aurais su en 15 minutes et pas après 2 h 30 d'attente.
+
+### Le cache, pour ne pas tout retélécharger
+
+`actions/cache` garde le fichier `data/ptbxl100.npz` chez GitHub entre deux runs. Il est retrouvé grâce à sa clé, `ptbxl-1.0.3-100hz-v1`. L'étape de téléchargement a la condition `if: steps.data.outputs.cache-hit != 'true'`, elle ne tourne que si le cache n'a pas été trouvé.
+
+Le test rapide a créé le cache. Au lancement des 20 époques, l'étape de téléchargement est marquée "skipped" et le cache a été restauré en 3 secondes. Si un jour je change le format du cache, il faudra changer la clé (`v2`), sinon GitHub redonnerait l'ancien fichier.
+
+### Les artefacts, plutôt que commiter le modèle
+
+À la fin, `actions/upload-artifact` enregistre le dossier `runs/main` (le modèle et `history.json`) comme artefact, téléchargeable depuis la page du run pendant 90 jours. J'aurais pu faire commiter le modèle par le workflow lui-même, mais ce commit aurait été fait par un robot (`github-actions[bot]`), qui serait apparu dans les contributeurs. Et il y aurait un fichier binaire de plus dans l'historique à chaque entraînement. Le modèle final, je l'ajouterai moi-même plus tard.
+
+### Le résumé sur la page du run
+
+`scripts/summary.py` lit `history.json` et écrit un tableau en markdown, une ligne par époque, la meilleure en gras. Tout ce qu'on écrit dans le fichier `$GITHUB_STEP_SUMMARY` s'affiche sur la page du run, sous la liste des jobs. Pas besoin de fouiller dans les logs.
+
+La ligne `echo "::notice title=Entraînement::..."` crée une annotation, le petit encadré bleu en haut de la page. GitHub reconnaît les lignes qui commencent par `::notice`, `::warning` ou `::error` et les affiche à part.
+
+### Les résultats
+
+- 20 époques en 2 h 34 min, soit environ 7 min 40 par époque.
+- Meilleure époque, la 20e, avec une macro AUROC de **0,943** sur la validation (fold 8).
+
+La meilleure époque est la dernière. Ça ne veut pas forcément dire qu'il fallait plus d'époques. Avec `OneCycleLR`, le taux d'apprentissage devient presque nul à la fin, le modèle fait ses derniers petits ajustements et c'est souvent là qu'il est le meilleur.
+
+Le 0,943 est un peu optimiste, parce que c'est sur la validation que j'ai choisi la meilleure époque. Le vrai score sera mesuré une seule fois sur le test (fold 10), à l'étape 6. Pour comparer, l'article de référence sur PTB-XL donne autour de 0,93 sur le test pour les meilleurs modèles, sur ces 5 diagnostics.
+
+### Les avertissements sur la page du run
+
+Le run est vert, mais GitHub affiche deux avertissements jaunes. Le premier dit que les versions des actions que j'utilise (`checkout@v4`, `cache@v4`...) tournent sur une ancienne version de Node.js. Le second que `ubuntu-latest` va passer à une nouvelle version d'Ubuntu. Ce ne sont pas des erreurs, rien n'a cassé, c'est GitHub qui prévient d'un changement à venir.
