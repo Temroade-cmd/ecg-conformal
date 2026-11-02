@@ -4,6 +4,8 @@ import sys
 
 import numpy as np
 
+from ecgc import data as D
+
 
 def test_train_command(fake_cache, tmp_path):
     # la commande complète, comme elle sera lancée sur GitHub Actions
@@ -16,3 +18,6 @@ def test_train_command(fake_cache, tmp_path):
     assert cal["P"].shape == cal["Y"].shape
     assert cal["P"].shape[1] == 5
     assert ((cal["P"] >= 0) & (cal["P"] <= 1)).all()
+    # et ce sont bien les patients du fold 9, pas ceux de la validation
+    ds = D.load_cache(fake_cache)
+    np.testing.assert_array_equal(cal["Y"], ds.split(D.CAL_FOLD).Y)

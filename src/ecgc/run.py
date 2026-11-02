@@ -28,7 +28,8 @@ def cmd_train(a):
     ds = D.load_cache(Path(a.cache))
     # le test (fold 10) n'est pas touché ici, il sert une seule fois à la toute fin
     train, val = ds.split(D.TRAIN_FOLDS), ds.split(D.VAL_FOLD)
-    print(f"train {len(train)}  val {len(val)}")
+    cal = ds.split(D.CAL_FOLD)
+    print(f"train {len(train)}  val {len(val)}  calibration {len(cal)}")
 
     # normalisation calculée sur le train uniquement, pour ne rien apprendre du test
     mean, std = D.lead_stats(train.X)
@@ -38,9 +39,10 @@ def cmd_train(a):
     torch.save({"state_dict": net.state_dict(), "mean": mean, "std": std}, out / "model.pt")
     (out / "history.json").write_text(json.dumps(history, indent=2))
 
-    # les probas des patients de calibration, la prédiction conforme en aura besoin
-    P_cal = predict(net, val.X, mean, std)
-    np.savez_compressed(out / "calibration.npz", P=P_cal, Y=val.Y)
+    # les probas des patients de calibration (fold 9), la prédiction conforme en aura besoin
+    # pas la validation, elle a déjà servi à choisir la meilleure époque
+    P_cal = predict(net, cal.X, mean, std)
+    np.savez_compressed(out / "calibration.npz", P=P_cal, Y=cal.Y)
     best = max(history, key=lambda h: h["val_macro_auc"])
     print(f"best epoch {best['epoch']}  macro AUROC {best['val_macro_auc']:.4f}")
 
