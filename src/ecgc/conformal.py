@@ -28,11 +28,12 @@ def calibration_scores(probs, Y):
 
 
 def _pvalues(scores, cal_sorted):
-    # p-valeur conforme = part des scores de calibration >= score
+    # p-valeur conforme = (1 + nb de scores de calibration >= score) / (n + 1)
+    # le +1 compte le nouveau patient lui-même, il fait partie des n + 1
     # la liste est triée donc searchsorted fait le comptage d'un coup
     n = len(cal_sorted)
     n_ge = n - np.searchsorted(cal_sorted, scores, side="left")
-    return n_ge / n
+    return (1.0 + n_ge) / (n + 1.0)
 
 
 def pvalues(probs, cal):
