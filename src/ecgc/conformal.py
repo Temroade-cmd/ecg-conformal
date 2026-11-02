@@ -43,3 +43,19 @@ def pvalues(probs, cal):
         p_pos[:, k] = _pvalues(1.0 - probs[:, k], c["pos"])
         p_neg[:, k] = _pvalues(probs[:, k], c["neg"])
     return p_pos, p_neg
+
+
+def mondrian_sets(probs, cal, alpha):
+    # on garde une réponse si sa p-valeur dépasse alpha
+    # avec alpha = 0.1, un vrai positif garde "présent" au moins 90% du temps, pareil pour les négatifs
+    p_pos, p_neg = pvalues(probs, cal)
+    return p_pos > alpha, p_neg > alpha
+
+
+def states(inc_pos, inc_neg):
+    # une seule réponse gardée = le modèle tranche, les deux = il ne sait pas, aucune = cas atypique
+    s = np.full(inc_pos.shape, "atypical", dtype=object)
+    s[inc_pos & ~inc_neg] = "present"
+    s[~inc_pos & inc_neg] = "absent"
+    s[inc_pos & inc_neg] = "uncertain"
+    return s
