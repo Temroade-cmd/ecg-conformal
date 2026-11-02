@@ -12,7 +12,7 @@ Chaque étape est expliquée dans [JOURNAL.md](JOURNAL.md), avec le pourquoi de 
 - [x] 2. Le modèle
 - [x] 3. L'entraînement
 - [x] 4. Le vrai entraînement sur GitHub Actions
-- [ ] 5. La prédiction conforme
+- [x] 5. La prédiction conforme
 - [ ] 6. L'évaluation
 - [ ] 7. L'app Streamlit et le déploiement
 - [ ] 8. README final et figures
