@@ -36,3 +36,27 @@ def test_states():
     inc_pos = np.array([[True, False, True, False]])
     inc_neg = np.array([[False, True, True, False]])
     assert list(cp.states(inc_pos, inc_neg)[0]) == ["present", "absent", "uncertain", "atypical"]
+
+
+def test_fnr_goes_down_when_lambda_goes_up():
+    rng = np.random.default_rng(1)
+    P, Y = simulate(rng, 300)
+    keep = Y.sum(1) > 0  # seulement les patients qui ont au moins un diagnostic
+    P, Y = P[keep], Y[keep]
+    fnr = [cp.fnr_loss(P, Y, lam).mean() for lam in (0.0, 0.3, 0.6, 0.9, 1.0)]
+    # lam = 0, on n'annonce rien, tout est oublié. lam = 1, on annonce tout, rien n'est oublié
+    assert all(a >= b for a, b in zip(fnr, fnr[1:]))
+    assert fnr[-1] == 0.0
+
+
+def test_risk_control_limits_missed_diagnoses():
+    rng = np.random.default_rng(2)
+    alpha, fnrs = 0.1, []
+    for _ in range(200):
+        P_cal, Y_cal = simulate(rng, 300)
+        P_te, Y_te = simulate(rng, 300)
+        lam = cp.crc_lambda(P_cal, Y_cal, alpha)
+        keep = Y_te.sum(1) > 0
+        fnrs.append(cp.fnr_loss(P_te[keep], Y_te[keep], lam).mean())
+    # en moyenne sur les tirages, on oublie au plus 10% des vrais diagnostics
+    assert np.mean(fnrs) <= alpha + 0.005
