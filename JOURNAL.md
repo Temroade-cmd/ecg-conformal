@@ -283,3 +283,136 @@ Le 0,943 est un peu optimiste, parce que c'est sur la validation que j'ai choisi
 ### Les avertissements sur la page du run
 
 Le run est vert, mais GitHub affiche deux avertissements jaunes. Le premier dit que les versions des actions que j'utilise (`checkout@v4`, `cache@v4`...) tournent sur une ancienne version de Node.js. Le second que `ubuntu-latest` va passer à une nouvelle version d'Ubuntu. Ce ne sont pas des erreurs, rien n'a cassé, c'est GitHub qui prévient d'un changement à venir.
+
+---
+
+## Étape 5. La prédiction conforme
+
+### Ce que j'ai ajouté, dans l'ordre des commits
+
+1. Les scores de calibration
+2. Les p-valeurs
+3. Les réponses gardées et les quatre états
+4. Les tests de la prédiction conforme, qui ont échoué
+5. La correction du +1 oublié, les tests repassent au vert
+6. Le contrôle du risque
+7. Les tests du contrôle du risque
+8. `run.py` garde les probas de calibration
+9. La correction, la calibration se fait sur le fold 9
+
+### Le problème que ça résout
+
+Le modèle donne une proba, par exemple 0,62 pour l'infarctus. Mais 0,62 ne veut pas dire "62% de chances". Un réseau de neurones peut être trop sûr de lui ou pas assez, ses probas ne sont pas fiables telles quelles. Et surtout, il donne toujours une réponse, même quand l'ECG est ambigu.
+
+Je voulais un modèle qui sache dire "je ne sais pas", avec une garantie chiffrée. C'est ce que fait la prédiction conforme, sans réentraîner le modèle. Elle se branche sur ses sorties.
+
+### L'idée, comparer à des patients déjà connus
+
+Le fold 9 sert de calibration. Ce sont des patients que le modèle n'a jamais vus, et dont je connais les vrais diagnostics. Pour chaque diagnostic, je les sépare en deux groupes, ceux qui l'ont vraiment (les positifs) et ceux qui ne l'ont pas (les négatifs).
+
+Pour un nouveau patient, je pose deux questions.
+- S'il avait le diagnostic, est-ce que sa proba ressemblerait à celles des vrais positifs ?
+- S'il ne l'avait pas, est-ce qu'elle ressemblerait à celles des vrais négatifs ?
+
+### Le score de bizarrerie et la p-valeur
+
+Pour un vrai positif, une proba basse est bizarre, donc son score est `1 - p`. Pour un vrai négatif, une proba haute est bizarre, donc son score est `p`. `calibration_scores` calcule ces scores pour tous les patients de calibration et les trie.
+
+La p-valeur compte combien de patients de calibration sont au moins aussi bizarres que le nouveau.
+
+```
+p-valeur = (1 + nombre de scores de calibration >= score du nouveau) / (n + 1)
+```
+
+Un exemple. J'ai 100 vrais positifs en calibration. Le nouveau patient a une proba de 0,3, donc un score de 0,7 dans l'hypothèse "positif". Si 30 vrais positifs ont un score au moins aussi grand, la p-valeur vaut (1 + 30) / 101, environ 0,31. Il ressemble assez à un positif. S'il était plus bizarre que les 100, elle vaudrait 1 / 101, presque rien.
+
+Comme les scores sont triés, `np.searchsorted` trouve la position du nouveau score d'un coup, sans boucle sur les 100 patients.
+
+### Les quatre états
+
+Je garde une réponse si sa p-valeur dépasse `alpha`, par exemple 0,1.
+
+| "présent" gardé | "absent" gardé | Réponse |
+|---|---|---|
+| oui | non | présent |
+| non | oui | absent |
+| oui | oui | je ne sais pas |
+| non | non | atypique |
+
+"Je ne sais pas", c'est quand la proba ressemble aux deux groupes, la zone grise où positifs et négatifs se mélangent. "Atypique", c'est quand elle ne ressemble à aucun des deux, une proba que presque aucun patient connu n'a eue. C'est rare, mais ça peut arriver avec un ECG très différent de ceux de PTB-XL.
+
+### La garantie
+
+Avec `alpha = 0,1`, un patient qui a vraiment le diagnostic garde la réponse "présent" dans au moins 90% des cas. Pareil pour les patients qui ne l'ont pas avec "absent". Ça reste vrai même si le modèle est moyen, un modèle moins bon donnera juste plus de "je ne sais pas".
+
+Il y a une seule condition. Les patients de calibration et les nouveaux patients doivent venir du même mélange, aucun ne doit être "spécial" par rapport aux autres. On dit qu'ils sont échangeables.
+
+"Mondrian" veut dire que la garantie est calculée séparément pour chaque diagnostic et pour chaque groupe. C'est important en santé. Une garantie de 90% en moyenne sur tout le monde pourrait cacher un modèle qui rate souvent les malades, s'ils sont peu nombreux. Ici les malades ont leur propre garantie.
+
+### Erreur 1, j'ai oublié le +1
+
+Ma première version de `_pvalues` renvoyait simplement `n_ge / n`, la part des patients de calibration au moins aussi bizarres. Le test `test_pvalue_formula` l'a montré (commit "Tests de la prédiction conforme", rouge sur GitHub). Sur un petit exemple calculé à la main, il attendait 0,6, 1 et 0,2, et ma fonction donnait 0,5, 1 et 0.
+
+Le +1, c'est le nouveau patient lui-même. Avec lui, on a n + 1 patients en tout, et il est forcément au moins aussi bizarre que lui-même. Sans le +1, un patient plus bizarre que tous les autres aurait une p-valeur de 0, et la garantie n'est plus exacte. Et avec 0 patient de calibration, c'était une division par zéro.
+
+J'ai mesuré la différence avec des simulations, 2 000 tirages avec `alpha = 0,1`. Voici la part des vrais positifs qui gardent "présent".
+
+| Patients de calibration | Avec le +1 | Sans le +1 |
+|---:|---:|---:|
+| 30 | 0,950 | 0,860 |
+| 100 | 0,915 | 0,885 |
+| 400 | 0,904 | 0,896 |
+
+Avec beaucoup de patients l'écart est petit, c'est pour ça que le test de couverture passait quand même avec l'erreur. Seul le test de la formule exacte l'a attrapée. Avec peu de patients, la garantie de 90% tombe à 86%. Ce que je retiens, tester une formule sur un exemple assez petit pour le calculer à la main.
+
+### Le contrôle du risque
+
+La deuxième méthode répond à une autre question. Je veux une liste de diagnostics à vérifier, et ne pas oublier plus de 10% des vrais diagnostics.
+
+J'annonce tous les diagnostics dont la proba dépasse un seuil `1 - lam`. Plus `lam` est grand, plus le seuil est bas, plus j'annonce de diagnostics. J'en oublie moins, mais j'ai plus de fausses alertes. `fnr_loss` calcule, pour chaque patient, la part de ses vrais diagnostics que j'ai ratés (FNR veut dire taux de faux négatifs).
+
+`crc_lambda` essaie 2 001 valeurs de `lam` entre 0 et 1, et garde la plus petite qui respecte cette règle sur la calibration.
+
+```
+n / (n + 1) × risque mesuré + 1 / (n + 1) <= alpha
+```
+
+Le `1 / (n + 1)` joue le même rôle que le +1 de la p-valeur, une marge pour le nouveau patient, dans le pire cas où il perd tout. La garantie, en moyenne, la part des vrais diagnostics oubliés reste sous `alpha`.
+
+Les patients qui n'ont aucun diagnostic sont mis de côté, ils ne peuvent rien oublier.
+
+Les deux méthodes ne servent pas à la même chose. Le conforme par label donne une réponse diagnostic par diagnostic, avec "je ne sais pas", ce sera le cœur de l'app. Le contrôle du risque donne une seule liste, pratique pour un dépistage où il ne faut surtout pas rater de malades.
+
+### Erreur 2, j'ai calibré sur la validation
+
+Dans `run.py`, j'ai d'abord calculé les probas de calibration sur `val`, le fold 8, parce qu'il était déjà chargé. Les tests passaient. Je l'ai vu en relisant le code.
+
+Le problème, le fold 8 a déjà servi à choisir la meilleure époque. Le modèle gardé est celui qui marche le mieux sur ces patients-là, donc ses probas y sont un peu trop bonnes par rapport à un vrai nouveau patient. Les patients de calibration ne sont plus comme les autres, la condition de la garantie n'est plus respectée, et la couverture annoncée serait trop optimiste.
+
+La correction, la calibration se fait sur le fold 9, qui n'a servi à rien avant. Et le test de la commande vérifie maintenant que `calibration.npz` contient exactement les patients du fold 9, pour que l'erreur ne puisse pas revenir sans que je le voie.
+
+### Chaque fold a un seul rôle
+
+| Folds | Rôle |
+|---|---|
+| 1 à 7 | train, le modèle apprend ses poids |
+| 8 | validation, choisir la meilleure époque |
+| 9 | calibration, la prédiction conforme |
+| 10 | test, le score final, une seule fois, à l'étape 6 |
+
+Dès qu'un fold a servi à faire un choix, il ne peut plus servir à mesurer quelque chose honnêtement.
+
+### Les tests
+
+- La formule de la p-valeur, sur un petit exemple calculé à la main.
+- La couverture, sur 200 tirages simulés, au moins 90% en moyenne pour les positifs et pour les négatifs.
+- Les quatre états.
+- Plus `lam` est grand, moins j'oublie de diagnostics, et avec `lam = 1` je n'en oublie aucun.
+- Le contrôle du risque, sur 200 tirages, au plus 10% de diagnostics oubliés en moyenne.
+- La commande `train` sauve `calibration.npz`, avec les patients du fold 9.
+
+Les tests de la prédiction conforme utilisent de fausses probas simulées, pas le vrai modèle. C'est voulu. La garantie ne dépend pas du modèle, donc je peux la vérifier en quelques secondes, sans rien entraîner.
+
+### Et sur les vrais ECG ?
+
+Pas encore. `calibration.npz` sera produit au prochain entraînement. Les vrais chiffres, la couverture sur le test et la part de "je ne sais pas", viendront à l'étape 6.
