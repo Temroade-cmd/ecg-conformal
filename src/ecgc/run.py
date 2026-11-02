@@ -8,10 +8,11 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from . import data as D
-from .train import fit
+from .train import fit, predict
 
 
 def cmd_prepare(a):
@@ -36,6 +37,10 @@ def cmd_train(a):
     # on sauve les poids et la normalisation ensemble, l'un ne sert à rien sans l'autre
     torch.save({"state_dict": net.state_dict(), "mean": mean, "std": std}, out / "model.pt")
     (out / "history.json").write_text(json.dumps(history, indent=2))
+
+    # les probas des patients de calibration, la prédiction conforme en aura besoin
+    P_cal = predict(net, val.X, mean, std)
+    np.savez_compressed(out / "calibration.npz", P=P_cal, Y=val.Y)
     best = max(history, key=lambda h: h["val_macro_auc"])
     print(f"best epoch {best['epoch']}  macro AUROC {best['val_macro_auc']:.4f}")
 
