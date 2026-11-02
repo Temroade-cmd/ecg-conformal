@@ -25,3 +25,21 @@ def calibration_scores(probs, Y):
         neg = np.sort(probs[Y[:, k] == 0, k])
         out.append({"pos": pos, "neg": neg})
     return out
+
+
+def _pvalues(scores, cal_sorted):
+    # p-valeur conforme = part des scores de calibration >= score
+    # la liste est triée donc searchsorted fait le comptage d'un coup
+    n = len(cal_sorted)
+    n_ge = n - np.searchsorted(cal_sorted, scores, side="left")
+    return n_ge / n
+
+
+def pvalues(probs, cal):
+    # deux tableaux de la même forme que probs, p-valeur "présent" et p-valeur "absent"
+    p_pos = np.empty_like(probs, dtype=np.float64)
+    p_neg = np.empty_like(probs, dtype=np.float64)
+    for k, c in enumerate(cal):
+        p_pos[:, k] = _pvalues(1.0 - probs[:, k], c["pos"])
+        p_neg[:, k] = _pvalues(probs[:, k], c["neg"])
+    return p_pos, p_neg
