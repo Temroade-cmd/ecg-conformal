@@ -4,9 +4,11 @@ Le modèle donne une proba par diagnostic. La prédiction conforme compare cette
 à celles de patients dont on connaît déjà la réponse (la calibration, fold 9),
 et en tire une réponse qui a une garantie.
 
-Conforme par label (Mondrian). Pour chaque diagnostic, on regarde si la proba du patient
-ressemble à celles des vrais positifs, des vrais négatifs, des deux, ou d'aucun.
-Réponse possible, présent, absent, je ne sais pas, ou atypique.
+Deux méthodes ici.
+1. Conforme par label (Mondrian). Pour chaque diagnostic, on regarde si la proba du patient
+   ressemble à celles des vrais positifs, des vrais négatifs, des deux, ou d'aucun.
+   Réponse possible, présent, absent, je ne sais pas, ou atypique.
+2. Contrôle du risque. Un seul seuil qui limite le taux de diagnostics oubliés.
 """
 
 import numpy as np
@@ -60,3 +62,26 @@ def states(inc_pos, inc_neg):
     s[~inc_pos & inc_neg] = "absent"
     s[inc_pos & inc_neg] = "uncertain"
     return s
+
+
+# contrôle du risque, taux de diagnostics oubliés
+
+def fnr_loss(probs, Y, lam):
+    # on annonce tous les diagnostics qui ont une proba >= 1 - lam
+    # pour chaque patient, la part de ses vrais diagnostics qu'on a ratés
+    pred = probs >= 1.0 - lam
+    hits = (pred & (Y == 1)).sum(1)
+    return 1.0 - hits / np.maximum(Y.sum(1), 1)
+
+
+def crc_lambda(probs, Y, alpha, grid=2001):
+    # plus lam est grand, plus on annonce de diagnostics, et moins on en oublie
+    # on cherche le plus petit lam qui respecte n/(n+1) * risque + 1/(n+1) <= alpha
+    keep = Y.sum(1) > 0  # un patient sans aucun diagnostic ne peut rien oublier
+    probs, Y = probs[keep], Y[keep]
+    n = len(Y)
+    for lam in np.linspace(0.0, 1.0, grid):
+        risk = fnr_loss(probs, Y, lam).mean()
+        if n / (n + 1) * risk + 1 / (n + 1) <= alpha:
+            return float(lam)
+    return 1.0
