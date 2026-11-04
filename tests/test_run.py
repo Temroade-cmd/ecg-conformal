@@ -21,3 +21,7 @@ def test_train_command(fake_cache, tmp_path):
     # et ce sont bien les patients du fold 9, pas ceux de la validation
     ds = D.load_cache(fake_cache)
     np.testing.assert_array_equal(cal["Y"], ds.split(D.CAL_FOLD).Y)
+    # et l'évaluation sur le test, faite une seule fois à la fin
+    res = json.loads((tmp_path / "results.json").read_text())
+    assert res["n_test"] == len(ds.split(D.TEST_FOLD))
+    assert 0 <= res["macro_auroc"]["value"] <= 1

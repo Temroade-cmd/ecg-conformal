@@ -2,6 +2,8 @@
 
     python -m ecgc.run prepare --ptbxl chemin/vers/ptb-xl --cache data/ptbxl100.npz
     python -m ecgc.run train   --cache data/ptbxl100.npz --out runs/main
+
+train entraîne le modèle, garde les probas de calibration, puis évalue une seule fois sur le test.
 """
 
 import argparse
@@ -12,6 +14,7 @@ import numpy as np
 import torch
 
 from . import data as D
+from .evaluate import evaluate
 from .train import fit, predict
 
 
@@ -26,10 +29,10 @@ def cmd_train(a):
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     ds = D.load_cache(Path(a.cache))
-    # le test (fold 10) n'est pas touché ici, il sert une seule fois à la toute fin
+    # le test (fold 10) ne sert qu'une fois, tout à la fin, quand le modèle et la calibration sont figés
     train, val = ds.split(D.TRAIN_FOLDS), ds.split(D.VAL_FOLD)
-    cal = ds.split(D.CAL_FOLD)
-    print(f"train {len(train)}  val {len(val)}  calibration {len(cal)}")
+    cal, test = ds.split(D.CAL_FOLD), ds.split(D.TEST_FOLD)
+    print(f"train {len(train)}  val {len(val)}  calibration {len(cal)}  test {len(test)}")
 
     # normalisation calculée sur le train uniquement, pour ne rien apprendre du test
     mean, std = D.lead_stats(train.X)
@@ -45,6 +48,13 @@ def cmd_train(a):
     np.savez_compressed(out / "calibration.npz", P=P_cal, Y=cal.Y)
     best = max(history, key=lambda h: h["val_macro_auc"])
     print(f"best epoch {best['epoch']}  macro AUROC {best['val_macro_auc']:.4f}")
+
+    # la seule fois où le test est utilisé
+    P_test = predict(net, test.X, mean, std)
+    res = evaluate(P_test, test.Y, P_cal, cal.Y, D.CLASSES)
+    (out / "results.json").write_text(json.dumps(res, indent=2))
+    m = res["macro_auroc"]
+    print(f"test macro AUROC {m['value']:.4f}  (95% CI {m['ci95'][0]:.4f} to {m['ci95'][1]:.4f})")
 
 
 def main():
