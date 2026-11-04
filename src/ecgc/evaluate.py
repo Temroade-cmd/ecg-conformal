@@ -13,13 +13,13 @@ from . import conformal as cp
 
 
 def bootstrap_macro_auc(Y, P, n_boot=1000, seed=0):
-    # on refait le test 1000 fois en tirant les patients au hasard
-    # replace=False pour ne jamais prendre deux fois le même patient
+    # on refait le test 1000 fois en tirant des patients au hasard, avec remise
+    # un même patient peut sortir plusieurs fois, un autre jamais, c'est ce qui fait varier le score
     rng = np.random.default_rng(seed)
     point = np.mean([roc_auc_score(Y[:, k], P[:, k]) for k in range(Y.shape[1])])
     vals = []
     for _ in range(n_boot):
-        idx = rng.choice(len(Y), len(Y), replace=False)
+        idx = rng.choice(len(Y), len(Y), replace=True)
         Yb, Pb = Y[idx], P[idx]
         if (Yb.sum(0) == 0).any() or (Yb.sum(0) == len(Yb)).any():
             continue  # tirage inutilisable si un diagnostic n'a que des 0 ou que des 1
