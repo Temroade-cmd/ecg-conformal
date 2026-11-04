@@ -1,7 +1,9 @@
 """Évaluation sur le fold de test (fold 10), une seule fois, avec le modèle final.
 
+Trois mesures.
 1. La macro AUROC, avec un intervalle de confiance à 95% calculé par bootstrap.
 2. La prédiction conforme par diagnostic, pour vérifier que la garantie tient vraiment sur de nouveaux patients.
+3. Le contrôle du risque, la part de diagnostics oubliés avec le seuil choisi sur la calibration.
 """
 
 import numpy as np
@@ -47,3 +49,35 @@ def mondrian_report(P, Y, cal, alpha, classes):
             "atypical_rate": float((st[:, k] == "atypical").mean()),
         }
     return per
+
+
+def crc_report(P, Y, lam):
+    # le seuil a été choisi sur la calibration, ici on regarde ce qu'il donne sur le test
+    keep = Y.sum(1) > 0  # comme pour la calibration, un patient sans diagnostic ne peut rien oublier
+    P, Y = P[keep], Y[keep]
+    pred = P >= 1.0 - lam
+    return {
+        "lambda": float(lam),
+        "threshold": float(1.0 - lam),
+        "fnr": float(cp.fnr_loss(P, Y, lam).mean()),
+        "mean_set_size": float(pred.sum(1).mean()),  # nombre moyen de diagnostics annoncés par patient
+        "mean_true_labels": float(Y.sum(1).mean()),  # nombre moyen de vrais diagnostics par patient
+    }
+
+
+def evaluate(P_test, Y_test, P_cal, Y_cal, classes, alphas=(0.1, 0.05)):
+    # la calibration n'utilise que le fold 9, tous les chiffres sont mesurés sur le fold 10
+    cal = cp.calibration_scores(P_cal, Y_cal)
+    auc, lo, hi = bootstrap_macro_auc(Y_test, P_test)
+    res = {
+        "n_test": int(len(Y_test)),
+        "n_calibration": int(len(Y_cal)),
+        "macro_auroc": {"value": auc, "ci95": [lo, hi]},
+        "auroc_per_class": {c: float(roc_auc_score(Y_test[:, k], P_test[:, k])) for k, c in enumerate(classes)},
+        "mondrian": {str(a): mondrian_report(P_test, Y_test, cal, a, classes) for a in alphas},
+        "crc": {},
+    }
+    for a in alphas:
+        lam = cp.crc_lambda(P_cal, Y_cal, a)
+        res["crc"][str(a)] = crc_report(P_test, Y_test, lam)
+    return res
