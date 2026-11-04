@@ -416,3 +416,82 @@ Les tests de la prédiction conforme utilisent de fausses probas simulées, pas 
 ### Et sur les vrais ECG ?
 
 Pas encore. `calibration.npz` sera produit au prochain entraînement. Les vrais chiffres, la couverture sur le test et la part de "je ne sais pas", viendront à l'étape 6.
+
+---
+
+## Étape 6. L'évaluation
+
+### Ce que j'ai ajouté, dans l'ordre des commits
+
+1. La macro AUROC avec son intervalle de confiance (bootstrap)
+2. La vérification de la garantie conforme, diagnostic par diagnostic
+3. Le contrôle du risque sur le test, et la fonction `evaluate` qui rassemble tout
+4. Les tests de l'évaluation, qui ont échoué
+5. La correction du bootstrap, les tests repassent au vert
+6. `run.py` évalue le modèle sur le test, une seule fois, à la fin
+7. Le résumé du run, avec les scores de test et la couverture
+
+### Le test ne sert qu'une fois
+
+Le fold 10 n'avait encore jamais été touché. Il sert maintenant une seule fois, à la toute fin de `run.py`, quand le modèle est entraîné, la meilleure époque choisie sur le fold 8 et la calibration faite sur le fold 9. Plus rien ne bouge après.
+
+Si je regardais le score du test, que je changeais un réglage, puis que je recommençais, le test deviendrait petit à petit un deuxième fold de validation. Le score final serait trop optimiste, exactement comme quand j'avais choisi la meilleure époque sur le test à l'étape 3.
+
+### Pourquoi un intervalle de confiance
+
+Le test contient 2 158 patients. Avec 2 158 autres patients, le score serait un peu différent. L'intervalle de confiance dit de combien il pourrait bouger.
+
+Le bootstrap simule ces "autres patients" sans en avoir. Je tire 2 158 patients au hasard dans le test, avec remise, et je recalcule la macro AUROC. Je recommence 1 000 fois. L'intervalle à 95% va du 2,5e au 97,5e percentile de ces 1 000 scores.
+
+### Erreur, j'ai tiré les patients sans remise
+
+Dans ma première version, j'avais écrit `rng.choice(len(Y), len(Y), replace=False)`. Je pensais qu'il ne fallait jamais prendre deux fois le même patient.
+
+Le test `test_bootstrap_gives_a_real_interval` l'a montré (commit "Tests de l'évaluation", rouge sur GitHub). L'intervalle valait exactement 0,9835 à 0,9835, réduit à un seul point. Si on tire 2 158 patients parmi 2 158 sans remise, on retombe toujours sur les mêmes patients, juste dans un autre ordre, et l'AUROC ne change jamais.
+
+C'est la remise qui fait tout le bootstrap. Un patient peut sortir deux ou trois fois, un autre jamais, et c'est ce qui fait varier le score d'un tirage à l'autre. Avec `replace=True`, les tests repassent au vert.
+
+Ce que je retiens, un intervalle trop étroit est aussi suspect qu'un score trop beau.
+
+### Le contrôle du risque sur le test
+
+`crc_report` reprend le seuil choisi sur la calibration et regarde ce qu'il donne sur le test. La part de diagnostics oubliés, et combien de diagnostics le modèle annonce par patient. Comme pour la calibration, les patients sans aucun diagnostic sont mis de côté, et un test le vérifie.
+
+### Les résultats
+
+Le run n°4 sur GitHub Actions a entraîné le modèle pendant 20 époques (2 h 39), puis l'a évalué sur le test.
+
+- Meilleure époque, la 20e, avec 0,943 de macro AUROC sur la validation.
+- Sur le test, **0,927 de macro AUROC**, avec un intervalle de confiance à 95% de 0,920 à 0,934, sur 2 158 patients.
+
+Le score baisse un peu entre la validation et le test, c'est normal. La validation a servi à choisir l'époque, elle était un peu optimiste. Le 0,927 est le vrai score, et il est dans la zone des meilleurs modèles de l'article de référence sur PTB-XL, autour de 0,93.
+
+La prédiction conforme, avec `alpha = 0,1`, donc une couverture attendue d'au moins 90%.
+
+| Diagnostic | AUROC | Couverture malades | Couverture non malades | Tranché | Je ne sais pas |
+|---|---:|---:|---:|---:|---:|
+| NORM | 0,947 | 91,9% | 90,2% | 91,1% | 8,9% |
+| MI | 0,933 | 89,8% | 89,6% | 90,0% | 10,0% |
+| STTC | 0,937 | 89,4% | 91,5% | 90,8% | 9,2% |
+| CD | 0,921 | 87,1% | 90,9% | 90,1% | 9,9% |
+| HYP | 0,898 | 88,2% | 90,7% | 81,5% | 18,5% |
+
+Aucun patient n'est "atypique".
+
+Le contrôle du risque, avec `alpha = 0,1`, choisit un seuil de 0,159. Le modèle annonce tous les diagnostics dont la proba dépasse 0,159. Sur le test, il oublie 10,5% des vrais diagnostics, et il annonce 1,75 diagnostic par patient alors que les patients en ont 1,29 en moyenne.
+
+### Comment je lis ces chiffres
+
+**La couverture est autour de 90%, pas toujours au-dessus.** Pour CD chez les malades, elle est à 87,1%. Ça ne casse pas la garantie. La garantie dit "au moins 90% en moyenne", si on refaisait la calibration et le test avec beaucoup d'autres patients. Elle ne promet pas 90% sur chaque test. Avec seulement quelques centaines de malades par diagnostic, un écart de 2 ou 3 points dans un sens ou dans l'autre est normal. Mes simulations de l'étape 5 montraient la même chose, en moyenne c'était juste, tirage par tirage ça bougeait.
+
+**La garantie a un prix, et ce prix dépend du modèle.** Pour NORM, le diagnostic le mieux appris (0,947), le modèle tranche dans 91% des cas. Pour HYP, le plus difficile (0,898), il dit "je ne sais pas" pour 18,5% des patients. La prédiction conforme ne rend pas le modèle meilleur. Elle le rend honnête, et un modèle moins bon le paie en "je ne sais pas" au lieu de se tromper en silence.
+
+**Le contrôle du risque échange les oublis contre des fausses alertes.** Pour ne rater qu'environ 10% des diagnostics, il faut un seuil bas (0,159), et donc annoncer en moyenne un demi-diagnostic de trop par patient. Pour un dépistage, c'est souvent le bon choix. Une fausse alerte se vérifie, un malade raté repart chez lui.
+
+### Les tests
+
+- L'intervalle du bootstrap contient le score, et il n'est pas réduit à un point.
+- Sur 2 000 patients simulés, la couverture de chaque diagnostic est proche de 90%, et chaque patient tombe dans un seul des trois cas (tranché, je ne sais pas, atypique).
+- Le contrôle du risque n'oublie rien quand on annonce tout, et ignore les patients sans diagnostic.
+- `evaluate` renvoie bien tous les chiffres.
+- La commande `train` complète écrit `results.json`, avec le bon nombre de patients de test.
