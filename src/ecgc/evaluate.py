@@ -1,6 +1,7 @@
 """Évaluation sur le fold de test (fold 10), une seule fois, avec le modèle final.
 
-Pour l'instant, la macro AUROC avec un intervalle de confiance à 95% calculé par bootstrap.
+1. La macro AUROC, avec un intervalle de confiance à 95% calculé par bootstrap.
+2. La prédiction conforme par diagnostic, pour vérifier que la garantie tient vraiment sur de nouveaux patients.
 """
 
 import numpy as np
@@ -24,3 +25,25 @@ def bootstrap_macro_auc(Y, P, n_boot=1000, seed=0):
     # l'intervalle à 95% va du 2,5e au 97,5e percentile des 1000 scores
     lo, hi = np.percentile(vals, [2.5, 97.5])
     return float(point), float(lo), float(hi)
+
+
+def mondrian_report(P, Y, cal, alpha, classes):
+    # pour chaque diagnostic, ce que la prédiction conforme donne vraiment sur le test
+    inc_pos, inc_neg = cp.mondrian_sets(P, cal, alpha)
+    st = cp.states(inc_pos, inc_neg)
+    per = {}
+    for k, name in enumerate(classes):
+        y = Y[:, k] == 1
+        decided = (st[:, k] == "present") | (st[:, k] == "absent")
+        correct = ((st[:, k] == "present") & y) | ((st[:, k] == "absent") & ~y)
+        per[name] = {
+            # la garantie, au moins 1 - alpha chez les malades et chez les non malades
+            "coverage_pos": float(inc_pos[y, k].mean()) if y.any() else None,
+            "coverage_neg": float(inc_neg[~y, k].mean()) if (~y).any() else None,
+            # le prix de la garantie, la part de patients pour qui le modèle tranche
+            "decided_rate": float(decided.mean()),
+            "accuracy_when_decided": float(correct[decided].mean()) if decided.any() else None,
+            "uncertain_rate": float((st[:, k] == "uncertain").mean()),
+            "atypical_rate": float((st[:, k] == "atypical").mean()),
+        }
+    return per
