@@ -33,6 +33,7 @@ MODEL_DIR = Path(os.environ.get("ECGC_MODEL_DIR", HERE / "model"))
 FILES = ["ecg_resnet.onnx", "meta.json", "samples.json"]
 PORTFOLIO = "https://portfolio-temtem.netlify.app"
 LINKEDIN = "https://www.linkedin.com/in/tamer-benturquia-648b25301"
+WIN = 50  # fenêtre d'occlusion, 0.5 s à 100 Hz
 
 st.set_page_config(page_title="ECG Conformal", page_icon=str(HERE / "favicon.png"), layout="wide")
 st.html(f"<style>{(HERE / 'style.css').read_text()}</style>")
@@ -94,6 +95,24 @@ def run(session, x):
 def predict(signal, version):
     session = load_bundle(version)[2]
     return run(session, signal[None])[0]
+
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def occlusion(signal, version):
+    # on met à zéro chaque fenêtre de 0.5 s de chaque dérivation, une par une
+    # et on regarde de combien chaque score baisse
+    # résultat de taille (5 classes, 12 x 20 fenêtres), ramené entre 0 et 1
+    session = load_bundle(version)[2]
+    base = predict(signal, version)
+    n_win = signal.shape[1] // WIN
+    batch = np.repeat(signal[None], 12 * n_win, axis=0)
+    for lead in range(12):
+        for w in range(n_win):
+            batch[lead * n_win + w, lead, w * WIN : (w + 1) * WIN] = 0.0
+    p = np.concatenate([run(session, batch[s : s + 60]) for s in range(0, len(batch), 60)])  # par paquets de 60
+    drop = np.clip(base[None, :] - p, 0, None).T
+    top = drop.max(axis=1, keepdims=True)
+    return np.divide(drop, top, out=np.zeros_like(drop), where=top > 0)
 
 
 def decide(probs, cal, alpha):
@@ -171,18 +190,24 @@ with tab_read:
         title = f"PTB-XL record {picked}"
     probs = predict(signal, version)
 
-    c1, c2 = st.columns([2.2, 2], vertical_alignment="bottom")
+    c1, c2, c3 = st.columns([2.2, 2, 1.6], vertical_alignment="bottom")
     with c1:
         level = st.slider("Guarantee", min_value=80, max_value=99, value=90, format="%d%%")
     with c2:
         target = st.selectbox("Diagnosis to inspect", range(len(classes)), index=int(np.argmax(probs)),
                               format_func=lambda k: names[k])
+    with c3:
+        explain = st.toggle("Shade on the trace")
     alpha = 1 - level / 100
     states, bounds = decide(probs, cal, alpha)
 
     # figure 1, l'ECG
-    figure(plots.ecg_sheet(signal, meta["leads"], meta["fs"]), "sheet", "12-lead ECG")
-    caption(f"<b>Fig. 1.</b> {title}. 10 s at 100 Hz, 25 mm/s, 10 mm/mV. The long strip at the bottom is lead II.")
+    saliency = occlusion(signal, version)[target] if explain else None
+    figure(plots.ecg_sheet(signal, meta["leads"], meta["fs"], saliency), "sheet", "12-lead ECG")
+    cap = f"<b>Fig. 1.</b> {title}. 10 s at 100 Hz, 25 mm/s, 10 mm/mV. The long strip at the bottom is lead II."
+    if explain:
+        cap += f" Blue marks the half-second windows whose removal lowers the {names[target].lower()} score most."
+    caption(cap)
 
     # quelques mesures simples sur le rythme, et l'accord avec le cardiologue
     m = ecg_tools.rhythm(signal)
@@ -213,6 +238,13 @@ with tab_read:
         caption(f"<b>Fig. 3.</b> {names[target]}. Scores of the {meta['results']['n_calibration']:,} calibration ECGs, "
                 "with and without the diagnosis, and where this ECG falls. The decision only depends on how unusual "
                 "its score is for each group.")
+
+    d1, d2, _ = st.columns([1.3, 1.3, 3])
+    with d1:
+        png = plots.report(signal, meta["leads"], meta["fs"], probs, bounds, states, names, title, level, truth, m)
+        st.download_button("Download this reading", png, file_name=f"ecg-reading-{picked}.png".replace(" ", "-"), mime="image/png")
+    with d2:
+        st.download_button("Download the ECG as CSV", ecg_tools.to_csv(signal), file_name=f"ecg-{picked}.csv".replace(" ", "-"), mime="text/csv")
 
 
 # --- onglet 2, méthode ---

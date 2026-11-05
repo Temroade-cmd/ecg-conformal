@@ -1,6 +1,7 @@
 """Les figures de l'app, faites avec matplotlib.
 
-Chaque dessin se fait sur un axe (draw_*), et les fonctions sans draw_ renvoient directement un SVG pour la page.
+Chaque dessin se fait sur un axe (draw_*) pour pouvoir le réutiliser dans le rapport PNG,
+et les fonctions sans draw_ renvoient directement un SVG pour la page.
 """
 
 import io
@@ -49,6 +50,13 @@ def to_svg(fig):
     svg = svg[svg.index("<svg"):]
     # largeur 100% pour que l'image s'adapte à l'écran, le viewBox garde les proportions
     return re.sub(r'(<svg[^>]*?) width="[^"]+" height="[^"]+"', r'\1 width="100%"', svg, count=1)
+
+
+def to_png(fig, dpi=200):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, facecolor=fig.get_facecolor())
+    plt.close(fig)
+    return buf.getvalue()
 
 
 # --- ECG ---
@@ -203,3 +211,28 @@ def position(cal, p, bounds, name):
     ax.legend(frameon=False, fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=1)
     fig.tight_layout()
     return to_svg(fig)
+
+
+# --- rapport à télécharger ---
+
+def report(signal, leads, fs, probs, bounds, states, names, title, level, truth=None, measures=None):
+    # une page PNG avec l'ECG et la réponse, pour garder une trace de la lecture
+    fig = plt.figure(figsize=(11.69, 8.27), facecolor="white")  # A4 paysage
+    fig.text(0.04, 0.95, "ecg-conformal", fontsize=9, color=MUTED)
+    fig.text(0.04, 0.915, title, fontsize=14, fontweight="bold")
+    sub = f"guarantee {level}%"
+    if measures:
+        sub += f"   heart rate {measures['hr']:.0f} bpm   RR {measures['rr_ms']:.0f} ms"
+    fig.text(0.04, 0.885, sub, fontsize=9, color=MUTED)
+    draw_ecg(fig.add_axes([0.04, 0.38, 0.92, 0.48]), signal, leads, fs)
+    draw_readout(fig.add_axes([0.04, 0.06, 0.48, 0.28]), probs, bounds, states, names, truth)
+    fig.text(0.58, 0.33, "How to read it", fontsize=9, fontweight="bold")
+    fig.text(0.58, 0.30,
+             "Each bar is the probability scale from 0 to 1.\n"
+             "Grey zone, the model rules the diagnosis out.\n"
+             "Red zone, it reports it.\n"
+             "Hatched zone, it cannot tell at this guarantee.\n"
+             "The dot is this ECG.\n\n"
+             "Research demo, not a medical device.",
+             fontsize=8, color=MUTED, va="top", linespacing=1.7)
+    return to_png(fig, dpi=150)

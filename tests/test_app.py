@@ -22,3 +22,10 @@ def test_guarantee_slider():
     at = testing.AppTest.from_file(APP, default_timeout=120).run()
     at.slider[0].set_value(99).run()
     assert not at.exception, [e.message for e in at.exception]
+
+
+def test_shading_on_the_trace():
+    # l'occlusion, les zones de l'ECG qui comptent le plus pour le diagnostic choisi
+    at = testing.AppTest.from_file(APP, default_timeout=120).run()
+    at.toggle[0].set_value(True).run()
+    assert not at.exception, [e.message for e in at.exception]
