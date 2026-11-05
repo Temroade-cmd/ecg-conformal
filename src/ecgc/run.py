@@ -2,8 +2,10 @@
 
     python -m ecgc.run prepare --ptbxl chemin/vers/ptb-xl --cache data/ptbxl100.npz
     python -m ecgc.run train   --cache data/ptbxl100.npz --out runs/main
+    python -m ecgc.run export  --run runs/main --cache data/ptbxl100.npz --out bundle
 
 train entraîne le modèle, garde les probas de calibration, puis évalue une seule fois sur le test.
+export prépare ce dont l'app a besoin à partir d'un run d'entraînement.
 """
 
 import argparse
@@ -15,6 +17,8 @@ import torch
 
 from . import data as D
 from .evaluate import evaluate
+from .export import write_bundle
+from .model import ECGResNet
 from .train import fit, predict
 
 
@@ -57,6 +61,22 @@ def cmd_train(a):
     print(f"test macro AUROC {m['value']:.4f}  (95% CI {m['ci95'][0]:.4f} to {m['ci95'][1]:.4f})")
 
 
+def cmd_export(a):
+    run = Path(a.run)
+    # weights_only=False car le fichier contient aussi mean et std (des tableaux numpy)
+    # c'est notre propre fichier, on peut lui faire confiance
+    ckpt = torch.load(run / "model.pt", weights_only=False)
+    net = ECGResNet()
+    net.load_state_dict(ckpt["state_dict"])
+    cal = np.load(run / "calibration.npz")
+    results = json.loads((run / "results.json").read_text())
+    # les ECG d'exemple de l'app viennent du test, ce sont des patients que le modèle n'a jamais vus
+    test = D.load_cache(Path(a.cache)).split(D.TEST_FOLD)
+    P_test = predict(net, test.X, ckpt["mean"], ckpt["std"])
+    write_bundle(Path(a.out), net, ckpt["mean"], ckpt["std"], cal["P"], cal["Y"], P_test, test.Y, test, results)
+    print(f"bundle written to {a.out}")
+
+
 def main():
     p = argparse.ArgumentParser(prog="ecgc")
     sub = p.add_subparsers(required=True)
@@ -73,6 +93,11 @@ def main():
     pt.add_argument("--seed", type=int, default=0)
     pt.add_argument("--threads", type=int, default=0)
     pt.set_defaults(func=cmd_train)
+    pe = sub.add_parser("export")
+    pe.add_argument("--run", required=True)
+    pe.add_argument("--cache", required=True)
+    pe.add_argument("--out", required=True)
+    pe.set_defaults(func=cmd_export)
     a = p.parse_args()
     a.func(a)
 
