@@ -8,6 +8,7 @@ et quelques ECG du test), puis utilise le même code conformal que l'évaluation
 
 import json
 import os
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -15,9 +16,13 @@ import numpy as np
 import onnxruntime as ort
 import streamlit as st
 
+# Streamlit Cloud installe seulement app/requirements.txt, pas le package ecgc (il demanderait PyTorch)
+# on ajoute donc src/ au chemin pour importer conformal.py directement, il n'a besoin que de numpy
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "src"))
+
 from ecgc import conformal as cp
 
-HERE = Path(__file__).resolve().parent
 REPO = "https://github.com/Temroade-cmd/ecg-conformal"
 MODEL_TAG = os.environ.get("ECGC_MODEL_TAG", "model-v1")
 MODEL_DIR = Path(os.environ.get("ECGC_MODEL_DIR", HERE / "model"))
