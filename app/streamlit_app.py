@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE.parent / "src"))
 sys.path.insert(0, str(HERE))
 
 from ecgc import conformal as cp
+import ecg_tools
 import plots
 
 REPO = "https://github.com/Temroade-cmd/ecg-conformal"
@@ -83,11 +84,38 @@ names = [meta["class_names"][k] for k in classes]
 st.title("ECG Conformal")
 st.write("A 12-lead ECG classifier that says when it cannot tell.")
 
+# un ECG envoyé par l'utilisateur, gardé dans la session
+with st.expander("Use your own ECG"):
+    st.markdown(
+        "A CSV with 12 columns in the order I, II, III, aVR, aVL, aVF, V1 to V6 (or a header with those names), "
+        "in millivolts, at least 10 seconds. Nothing is stored. "
+        "Keep in mind the guarantee was calibrated on PTB-XL, another device or hospital may not respect it."
+    )
+    up_col, fs_col = st.columns([3, 1])
+    with up_col:
+        upload = st.file_uploader("ECG file", type=["csv", "txt"], label_visibility="collapsed")
+    with fs_col:
+        fs_in = st.selectbox("Sampling rate", [100, 250, 500, 1000], index=2, format_func=lambda v: f"{v} Hz")
+    if upload is not None:
+        try:
+            sig, notes = ecg_tools.read_csv_ecg(upload.getvalue(), fs_in)
+            st.session_state["mine"] = sig
+            for n in notes:
+                st.caption(n)
+            st.caption("Loaded. Pick “your ECG” below.")
+        except ValueError as e:
+            st.error(str(e))
+
 ids = [s["ecg_id"] for s in samples]
-picked = st.selectbox("Record from the PTB-XL test fold", ids)
-i = ids.index(picked)
-signal = X[i]
-truth = [k in samples[i]["labels"] for k in classes]
+options = ids + (["your ECG"] if "mine" in st.session_state else [])
+picked = st.selectbox("Record from the PTB-XL test fold", options)
+if picked == "your ECG":
+    signal, truth, title = st.session_state["mine"], None, "Your ECG"
+else:
+    i = ids.index(picked)
+    signal = X[i]
+    truth = [k in samples[i]["labels"] for k in classes]
+    title = f"PTB-XL record {picked}"
 probs = predict(session, signal)
 
 c1, c2 = st.columns(2)
@@ -101,7 +129,18 @@ states, bounds = decide(probs, cal, alpha)
 
 # figure 1, l'ECG comme sur le papier
 figure(plots.ecg_sheet(signal, meta["leads"], meta["fs"]), "12-lead ECG")
-st.caption(f"Fig. 1. PTB-XL record {picked}. 10 s at 100 Hz, 25 mm/s, 10 mm/mV. The long strip at the bottom is lead II.")
+st.caption(f"Fig. 1. {title}. 10 s at 100 Hz, 25 mm/s, 10 mm/mV. The long strip at the bottom is lead II.")
+
+# quelques mesures simples sur le rythme, et l'accord avec le cardiologue
+m = ecg_tools.rhythm(signal)
+decided = [k for k, s_ in enumerate(states) if s_ in ("present", "absent")]
+agree = None if truth is None else sum((states[k] == "present") == truth[k] for k in decided)
+cols = st.columns(4)
+cols[0].metric("Heart rate, lead II", f"{m['hr']:.0f} bpm" if m else "n/a")
+cols[1].metric("RR interval", f"{m['rr_ms']:.0f} ms" if m else "n/a", None if not m else ("regular" if m["regular"] else "irregular"),
+               delta_color="off")
+cols[2].metric(f"Answers given at {level}%", f"{len(decided)} of 5")
+cols[3].metric("Agree with the cardiologist", f"{agree} of {len(decided)}" if agree is not None else "n/a")
 
 # figure 2, la réponse par diagnostic, figure 3, où tombe cet ECG parmi la calibration
 left, right = st.columns(2, gap="large")

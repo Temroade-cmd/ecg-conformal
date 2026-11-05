@@ -1,4 +1,6 @@
 streamlit>=1.40
 onnxruntime
 numpy
+pandas
+scipy
 matplotlib

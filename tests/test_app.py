@@ -13,7 +13,8 @@ def test_app_starts():
     # l'app démarre, télécharge le modèle depuis la release et affiche sa réponse sans erreur
     at = testing.AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception, [e.message for e in at.exception]
-    assert len(at.slider) == 1 and len(at.selectbox) == 2
+    assert len(at.slider) == 1
+    assert "Diagnosis to inspect" in [s.label for s in at.selectbox]
 
 
 def test_guarantee_slider():
