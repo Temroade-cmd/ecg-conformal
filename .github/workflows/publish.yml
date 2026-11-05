@@ -1,0 +1,59 @@
+name: publish the model
+
+# publie le modèle d'un run d'entraînement comme release GitHub
+# l'app télécharge ensuite le modèle depuis cette release, sans qu'un robot ait besoin de commiter dans le repo
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Identifiant du run d'entraînement (le nombre à la fin de l'adresse de sa page)"
+        required: true
+      tag:
+        description: "Nom de la release"
+        default: "model-v1"
+
+permissions:
+  contents: write  # pour créer la release
+  actions: read    # pour lire l'artefact d'un autre run
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e .
+
+      # les ECG du test, déjà en cache grâce au workflow d'entraînement
+      - name: Restore PTB-XL
+        uses: actions/cache/restore@v4
+        with:
+          path: data/ptbxl100.npz
+          key: ptbxl-1.0.3-100hz-v1
+          fail-on-cache-miss: true
+
+      # le modèle, la calibration et les résultats du run d'entraînement choisi
+      - name: Download the trained model
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: runs/main
+          merge-multiple: true
+
+      - name: Export for the app
+        run: python -m ecgc.run export --run runs/main --cache data/ptbxl100.npz --out bundle
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.event.inputs.tag }}" bundle/* \
+            --title "Modèle ${{ github.event.inputs.tag }}" \
+            --notes "Modèle du run d'entraînement ${{ github.event.inputs.run_id }}, exporté en ONNX pour l'app."
