@@ -11,12 +11,15 @@ import torch
 
 from . import conformal as cp
 from .data import CLASS_NAMES, CLASSES, FS, LEADS, N_SAMPLES
+from .model import Deployable
 
 
 def export_onnx(net, mean, std, path):
     # ONNX est un format standard, le modèle peut ensuite tourner sans PyTorch
     # axe batch dynamique, pour pouvoir envoyer plusieurs ECG d'un coup
-    model = net.eval()
+    # on exporte Deployable et pas le réseau seul, la normalisation et la sigmoïde sont dedans
+    # l'app envoie des millivolts et reçoit directement des probas entre 0 et 1
+    model = Deployable(net, mean, std).eval()
     dummy = torch.zeros(1, len(LEADS), N_SAMPLES)
     torch.onnx.export(
         model,
