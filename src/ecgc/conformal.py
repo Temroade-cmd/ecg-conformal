@@ -64,6 +64,22 @@ def states(inc_pos, inc_neg):
     return s
 
 
+def decision_bounds(pos_sorted, neg_sorted, alpha):
+    # la même règle que mondrian_sets, mais écrite en seuils sur la proba p
+    # "présent" est gardé si p >= a, "absent" est gardé si p <= b
+    # entre a et b les deux réponses sont gardées, c'est la zone où le modèle ne sait pas
+    # ça sert à dessiner les zones des barres dans l'app
+
+    def needed(n):  # le plus petit nombre m de scores >= qui donne (1 + m) / (n + 1) > alpha
+        return int(np.floor(alpha * (n + 1) - 1)) + 1
+
+    n, m = len(pos_sorted), needed(len(pos_sorted))
+    a = 0.0 if m <= 0 else (np.inf if m > n else 1.0 - float(pos_sorted[n - m]))
+    n, k = len(neg_sorted), needed(len(neg_sorted))
+    b = 1.0 if k <= 0 else (-np.inf if k > n else float(neg_sorted[n - k]))
+    return a, b
+
+
 # contrôle du risque, taux de diagnostics oubliés
 
 def fnr_loss(probs, Y, lam):

@@ -60,3 +60,17 @@ def test_risk_control_limits_missed_diagnoses():
         fnrs.append(cp.fnr_loss(P_te[keep], Y_te[keep], lam).mean())
     # en moyenne sur les tirages, on oublie au plus 10% des vrais diagnostics
     assert np.mean(fnrs) <= alpha + 0.005
+
+
+def test_decision_bounds_match_pvalue_rule():
+    # les seuils a et b doivent donner exactement la même décision que les p-valeurs
+    rng = np.random.default_rng(3)
+    P_cal, Y_cal = simulate(rng, 300)
+    cal = cp.calibration_scores(P_cal, Y_cal)
+    grid = np.linspace(0.0005, 0.9995, 1000)[:, None].repeat(5, 1)
+    for alpha in (0.01, 0.05, 0.1, 0.2, 0.5):
+        inc_pos, inc_neg = cp.mondrian_sets(grid, cal, alpha)
+        for k, c in enumerate(cal):
+            a, b = cp.decision_bounds(c["pos"], c["neg"], alpha)
+            assert np.array_equal(inc_pos[:, k], grid[:, k] >= a)
+            assert np.array_equal(inc_neg[:, k], grid[:, k] <= b)
