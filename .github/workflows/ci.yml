@@ -26,3 +26,21 @@ jobs:
           status=${PIPESTATUS[0]}
           grep "^FAILED" pytest.log | while read -r line; do echo "::error::$line"; done
           exit $status
+
+  app:
+    # l'app est testée comme sur Streamlit Cloud, avec seulement app/requirements.txt, sans installer le package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -r app/requirements.txt pytest
+      - name: Tests
+        run: |
+          pytest -q -rf tests/test_app.py | tee pytest.log
+          status=${PIPESTATUS[0]}
+          grep "^FAILED" pytest.log | while read -r line; do echo "::error::$line"; done
+          exit $status
