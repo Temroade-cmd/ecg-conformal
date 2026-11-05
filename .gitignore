@@ -3,3 +3,6 @@ __pycache__/
 .pytest_cache/
 data/
 runs/
+
+# le modèle de l'app est téléchargé depuis la release, il ne va pas dans le repo
+app/model/
